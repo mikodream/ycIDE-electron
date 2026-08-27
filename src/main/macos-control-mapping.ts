@@ -259,6 +259,8 @@ export function generateControlCode(
   const y = Number.isFinite(ctrl.y) ? ctrl.y : 0;
   const w = Number.isFinite(ctrl.width) && ctrl.width > 0 ? ctrl.width : 100;
   const h = Number.isFinite(ctrl.height) && ctrl.height > 0 ? ctrl.height : 20;
+  // NSWindow 的 contentRect 以左上角为原点（y 向上），而易语言坐标以左上角为原点（y 向下）。
+  // 需要将易语言的 (x, y) 翻转成 Cocoa 坐标：flippedY = windowH - y - h。
   const flippedY = Math.max(0, windowHeight - y - h);
   const ctrlVar = ctrl.type === '标签' || ctrl.type === 'Label'
     ? 'NSTextField*'
@@ -268,7 +270,7 @@ export function generateControlCode(
         ? 'NSImageView*'
         : 'NSButton*';
   const initCode = ctrl.type === '按钮' || ctrl.type === 'Button'
-    ? `[[NSButton alloc] initWithFrame:NSMakeRect(0, 0, ${w}, ${h})]`
+    ? `[[NSButton alloc] initWithFrame:NSMakeRect(${x}, ${flippedY}, ${w}, ${h})]`
     : mapping.initCode;
 
   let code = `    ${ctrlVar} ${varName} = ${initCode};\n`;
