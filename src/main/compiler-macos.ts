@@ -24,7 +24,10 @@ export interface MacosCompileOptions {
 export function generateMacosMainCode(options: MacosCompileOptions): { mainPath: string; additionalFiles: string[] } {
   const { project, tempDir, editorFiles = new Map(), windowInfo } = options;
   const additionalFiles: string[] = [];
-
+  const width = windowInfo?.width || 592;
+  const height = windowInfo?.height || 384;
+  const title = windowInfo?.title || project.projectName;
+  const escapedTitle = title.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   let mainCode = '/* 由 ycIDE 自动生成 (macOS) */\n';
   mainCode += `/* 项目名称: ${project.projectName} */\n\n`;
   mainCode += '#import <Cocoa/Cocoa.h>\n';
@@ -62,7 +65,7 @@ struct YC_TEXT {
   mainCode += generateMainWindowImplementation(project, windowInfo);
 
   // main 函数
-  mainCode += generateMainFunction(project);
+  mainCode += generateMainFunction(project, { width, height, title: escapedTitle, visible: windowInfo?.visible !== false, disabled: windowInfo?.disabled === true });
 
   const mainPath = join(tempDir, 'main.mm');
   writeFileSync(mainPath, mainCode, 'utf-8');
@@ -201,7 +204,7 @@ function generateMainWindowImplementation(project: ProjectInfo, windowInfo?: Win
   // 如果有窗口信息，生成控件创建代码
   if (windowInfo && windowInfo.controls) {
     implCode += '// 控件创建代码\n';
-    implCode += generateAllControlsCode(windowInfo.controls, 'window');
+    implCode += generateAllControlsCode(windowInfo.controls, 'window', windowInfo.height);
     implCode += '\n';
   }
   
@@ -213,7 +216,7 @@ static void CreateMainWindow(YCMainWindow* window) {
 `;
 }
 
-function generateMainFunction(project: ProjectInfo): string {
+function generateMainFunction(project: ProjectInfo, window: { width: number; height: number; title: string; visible: boolean; disabled: boolean }): string {
   return `
 int main(int argc, char* argv[]) {
   @autoreleasepool {
@@ -222,9 +225,9 @@ int main(int argc, char* argv[]) {
     
     // 创建主窗口
     YCMainWindow* mainWindow = [[YCMainWindow alloc] 
-        initWithProject:[NSString stringWithUTF8String:"${project.projectName}"]
-              width:800
-             height:600];
+    initWithProject:[NSString stringWithUTF8String:"${window.title}"]
+              width:${window.width}
+             height:${window.height}];
     
     // 创建控件
     CreateMainWindow(mainWindow);

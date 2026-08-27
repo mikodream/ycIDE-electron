@@ -244,52 +244,47 @@ export function getControlMapping(eycType: string): MacosControlMapping | null {
 export function generateControlCode(
   ctrl: WindowControlInfo,
   parentId: string,
-  ctrlId: number
+  ctrlId: number,
+  windowHeight = 384
 ): string {
   const mapping = getControlMapping(ctrl.type);
-  if (!mapping) {
-    return `    // TODO: 未实现的控件类型 ${ctrl.type}\n`;
-  }
+  if (!mapping) return `    // TODO: 未实现的控件类型 ${ctrl.type}\n`;
 
-  let code = '';
-
-  // 生成控件创建代码
   const varName = `yc_ctrl_${ctrl.name}`;
-  code += `    NSView* ${varName} = ${mapping.initCode};\n`;
+  const title = typeof ctrl.extraProps?.['标题'] === 'string'
+    ? String(ctrl.extraProps['标题'])
+    : (ctrl.text || '');
+  const escapedTitle = title.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const x = Number.isFinite(ctrl.x) ? ctrl.x : 0;
+  const y = Number.isFinite(ctrl.y) ? ctrl.y : 0;
+  const w = Number.isFinite(ctrl.width) && ctrl.width > 0 ? ctrl.width : 100;
+  const h = Number.isFinite(ctrl.height) && ctrl.height > 0 ? ctrl.height : 20;
+  const flippedY = Math.max(0, windowHeight - y - h);
+  const ctrlVar = ctrl.type === '标签' || ctrl.type === 'Label'
+    ? 'NSTextField*'
+    : ctrl.type === '画板' || ctrl.type === 'DrawPanel'
+      ? 'NSView*'
+      : ctrl.type === '图片框' || ctrl.type === 'PictureBox'
+        ? 'NSImageView*'
+        : 'NSButton*';
+  const initCode = ctrl.type === '按钮' || ctrl.type === 'Button'
+    ? `[[NSButton alloc] initWithFrame:NSMakeRect(0, 0, ${w}, ${h})]`
+    : mapping.initCode;
 
-  // 设置位置
-  const x = ctrl.x || 0;
-  const y = ctrl.y || 0;
-  const w = ctrl.width || 100;
-  const h = ctrl.height || 20;
-  code += `    [${varName} setFrame:NSMakeRect(${x}, ${y}, ${w}, ${h})];\n`;
-
-  // 设置属性
-  if (mapping.propMap) {
-    for (const [eycProp, objcMethod] of Object.entries(mapping.propMap)) {
-      const value = ctrl.extraProps?.[eycProp];
-      if (value === undefined) continue;
-
-      if (eycProp === '标题' && typeof value === 'string') {
-        code += `    [${varName} ${objcMethod}:[NSString stringWithUTF8String:"${value.replace(/"/g, '\\"')}"]];\n`;
-      } else if (eycProp === '可见') {
-        code += `    [${varName} setHidden:${!value}];\n`;
-      } else if (eycProp === '禁用') {
-        code += `    [${varName} setEnabled:${!value}];\n`;
-      } else if (eycProp === '选中') {
-        code += `    [${varName} setState:${value ? 1 : 0}];\n`;
-      } else if (typeof value === 'number') {
-        code += `    [${varName} ${objcMethod}:${value}];\n`;
-      }
-    }
+  let code = `    ${ctrlVar} ${varName} = ${initCode};\n`;
+  if (title && (ctrl.type === '按钮' || ctrl.type === 'Button')) {
+    code += `    [${varName} setTitle:@"${escapedTitle}"];\n`;
   }
-
-  // 添加到父窗口的 contentView（NSWindow 本身没有 addSubview:）
+  for (const [eycProp, objcMethod] of Object.entries(mapping.propMap || {})) {
+    const value = ctrl.extraProps?.[eycProp];
+    if (value === undefined || eycProp === '标题') continue;
+    if (eycProp === '可见') code += `    [${varName} setHidden:${!value}];\n`;
+    else if (eycProp === '禁用') code += `    [${varName} setEnabled:${!value}];\n`;
+    else if (eycProp === '选中') code += `    [${varName} setState:${value ? 1 : 0}];\n`;
+    else if (typeof value === 'number') code += `    [${varName} ${objcMethod}:${value}];\n`;
+  }
   code += `    [[${parentId} contentView] addSubview:${varName}];\n`;
-
-  // 注册控件
   code += `    [window addControl:${varName} name:@"${ctrl.name}"];\n`;
-
   return code;
 }
 
@@ -298,13 +293,14 @@ export function generateControlCode(
  */
 export function generateAllControlsCode(
   controls: WindowControlInfo[],
-  windowName: string
+  windowName: string,
+  windowHeight?: number
 ): string {
   let code = '';
   let ctrlId = 1001;
 
   for (const ctrl of controls) {
-    code += generateControlCode(ctrl, 'window', ctrlId++);
+    code += generateControlCode(ctrl, 'window', ctrlId++, windowHeight);
   }
 
   return code;
