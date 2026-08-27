@@ -1,16 +1,19 @@
 #import <AppKit/AppKit.h>
 #import <Foundation/Foundation.h>
 
-#include <chrono>
 #include <algorithm>
+#include <array>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <filesystem>
 #include <limits>
+#include <new>
 #include <string>
 #include <thread>
 #include <unordered_set>
+#include <vector>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -132,6 +135,11 @@ int movePathReplace(const std::filesystem::path& src, const std::filesystem::pat
     return 0;
   }
 }
+
+struct RuntimeWindowUnit;
+std::unordered_set<RuntimeWindowUnit*>& runtimeWindowUnits();
+RuntimeWindowUnit*& focusedWindowUnit();
+RuntimeWindowUnit*& activeWindowUnit();
 
 struct RuntimeWindowUnit {
   std::string className;

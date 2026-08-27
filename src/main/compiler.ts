@@ -13,6 +13,7 @@ import { parseColorLiteralToColorref } from '../shared/colorNames'
 import { parseExpr as astParseExpr, exprToC as astExprToC, type TranspileContext as AstTranspileContext } from './transpiler/parser'
 import { parseStmtFromLine, emitStmt, type EycStmt } from './transpiler/stmtAst'
 import { parseVarDeclFromLine, type EycVarDecl } from './transpiler/varDeclAst'
+import { generateMacosMainCode } from './compiler-macos'
 
 // 编译消息类型
 export interface CompileMessage {
@@ -42,7 +43,7 @@ export interface CompileResult {
 }
 
 // 窗口控件信息
-interface WindowControlInfo {
+export interface WindowControlInfo {
   type: string
   name: string
   x: number
@@ -68,7 +69,7 @@ interface MenuNodeInfo {
 }
 
 // 窗口文件信息
-interface WindowFileInfo {
+export interface WindowFileInfo {
   formName: string
   width: number
   height: number
@@ -161,7 +162,7 @@ interface ProjectFileEntry {
 }
 
 // 项目信息
-interface ProjectInfo {
+export interface ProjectInfo {
   projectName: string
   outputType: string
   platform: string
@@ -5817,7 +5818,27 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
 
   const lines = eycContent.split('\n')
   let result = `/* 由 ycIDE 自动从 ${fileName} 生成 */\n`
-  result += '#include <windows.h>\n#include <stdio.h>\n#include <stdint.h>\n#include <stdlib.h>\n#include <direct.h>\n#include <wchar.h>\n#include <wctype.h>\n#include <string.h>\n#include <filesystem>\n#include <vector>\n#include <string>\n#include <algorithm>\n#include <type_traits>\n#include <fstream>\n#include <initializer_list>\n\n'
+
+  // 平台感知头文件
+  if (targetPlatform === 'macos') {
+    result += '#import <Cocoa/Cocoa.h>\n'
+    result += '#import <objc/runtime.h>\n'
+    result += '#include <stdio.h>\n#include <stdint.h>\n#include <stdlib.h>\n'
+    result += '#include <wchar.h>\n#include <wctype.h>\n#include <string.h>\n'
+    result += '#include <string>\n#include <vector>\n#include <algorithm>\n\n'
+  } else if (targetPlatform === 'linux') {
+    result += '#include <windows.h>\n// Linux 兼容层\n'
+    result += '#include <stdio.h>\n#include <stdint.h>\n#include <stdlib.h>\n'
+    result += '#include <wchar.h>\n#include <wctype.h>\n#include <string.h>\n'
+    result += '#include <string>\n#include <vector>\n#include <algorithm>\n\n'
+  } else {
+    // Windows（原有逻辑）
+    result += '#include <windows.h>\n#include <stdio.h>\n#include <stdint.h>\n'
+    result += '#include <stdlib.h>\n#include <direct.h>\n#include <wchar.h>\n'
+    result += '#include <wctype.h>\n#include <string.h>\n#include <filesystem>\n'
+    result += '#include <vector>\n#include <string>\n#include <algorithm>\n'
+    result += '#include <type_traits>\n#include <fstream>\n#include <initializer_list>\n\n'
+  }
   result += generateYcmdNativeDeclarations(targetPlatform)
   result += 'namespace ycfs = std::filesystem;\n\n'
   result += 'typedef std::vector<unsigned char> YC_BIN;\n'
@@ -7800,8 +7821,36 @@ function generateMainC(
   targetPlatform: TargetPlatform = 'windows',
   previewWindow?: string, // 非空 = 窗口预览：以该窗体为启动窗口 + 跳过源代码转译
 ): string[] {
-  const mainCPath = join(tempDir, 'main.cpp')
+  const mainCPath = join(tempDir, targetPlatform === 'macos' ? 'main.mm' : 'main.cpp')
   const additionalCFiles: string[] = []
+
+  // macOS 使用独立 Cocoa 入口；不能让 Win32 生成器继续输出 WinMain/GDI 代码。
+  if (targetPlatform === 'macos') {
+    let windowInfo: WindowFileInfo | undefined
+    const efw = project.files.find(f => f.type === 'EFW' || f.fileName.toLowerCase().endsWith('.efw'))
+    if (efw) {
+      const raw = editorFiles?.get(efw.fileName) || (() => {
+        const p = join(project.projectDir, efw.fileName)
+        return existsSync(p) ? readFileSync(p, 'utf-8') : ''
+      })()
+      try {
+        const d = JSON.parse(raw)
+        windowInfo = createDefaultWindowFileInfo(d.name || basename(efw.fileName, '.efw'), d.title || project.projectName)
+        windowInfo.width = Number(d.width) || windowInfo.width
+        windowInfo.height = Number(d.height) || windowInfo.height
+        applyWindowProperties(windowInfo, d.properties || {})
+        if (Array.isArray(d.controls)) {
+          windowInfo.controls = d.controls.map((c: any) => ({
+            type: c.type || '', name: c.name || '', x: c.x ?? c.left ?? 0, y: c.y ?? c.top ?? 0,
+            width: c.width ?? 80, height: c.height ?? 24, text: resolveControlInitialText(c, c.properties || {}),
+            visible: c.visible ?? true, disabled: c.enabled === false, extraProps: { ...(c.properties || {}) },
+          }))
+        }
+      } catch { /* malformed .efw falls back to a blank Cocoa window */ }
+    }
+    const generated = generateMacosMainCode({ project, tempDir, editorFiles, windowInfo })
+    return generated.additionalFiles
+  }
   const transpileCachePath = join(tempDir, '.transpile-cache.json')
   const metadataStartTime = Date.now()
   sendMessage({ type: 'info', text: '正在分析项目元数据...' })
@@ -7822,7 +7871,14 @@ function generateMainC(
 
   let mainCode = '/* 由 ycIDE 自动生成 */\n'
   mainCode += `/* 项目名称: ${project.projectName} */\n\n`
-  mainCode += '#include <windows.h>\n#include <commctrl.h>\n#include <shellapi.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n#include <stdlib.h>\n#include <io.h>\n#include <fcntl.h>\n#include <gdiplus.h>\n#include <string>\n#include <map>\n#include <vector>\n#include <initializer_list>\n'
+
+  if (targetPlatform === 'windows') {
+    mainCode += '#include <windows.h>\n#include <commctrl.h>\n#include <shellapi.h>\n'
+    mainCode += '#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n'
+    mainCode += '#include <stdlib.h>\n#include <io.h>\n#include <fcntl.h>\n'
+    mainCode += '#include <gdiplus.h>\n#include <string>\n#include <map>\n'
+    mainCode += '#include <vector>\n#include <initializer_list>\n'
+  }
   // 部分 mingw commctrl.h 未定义较新的通用控件常量（SysLink 注册用），补齐守卫。
   mainCode += '#ifndef ICC_LINK_CLASSES\n#define ICC_LINK_CLASSES 0x00008000\n#endif\n\n'
   // 文本型值类型（与转译文件里的定义一致，供 yc_ctrl_get_text 跨编译单元按值返回）
@@ -10778,18 +10834,22 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
     sendMessage({ type: 'info', text: `目标平台: ${targetPlatform}, 目标架构: ${targetArch}` })
 
     // 查找编译器
-    const zigPath = findZigCompiler()
-    if (!zigPath) {
-      const zigHint = hostPlatform === 'windows'
-        ? '请确保 compiler/zig/zig.exe存在'
-        : '请确保 compiler/zig/zig存在'
-      sendMessage({ type: 'error', text: `错误: 找不到 Zig 编译器\n${zigHint}` })
+    const compiler = resolveCompilerForPlatform(targetPlatform, targetArch)
+    const compilerPath = compiler?.path || null
+    const compilerExtraArgs = compiler?.extraArgs || []
+    if (!compilerPath || !compiler) {
+      const compilerHint = targetPlatform === 'macos'
+        ? '请确保系统已安装 Xcode Command Line Tools（/usr/bin/clang++）'
+        : hostPlatform === 'windows'
+          ? '请确保 compiler/zig/zig.exe存在'
+          : '请确保 compiler/zig/zig存在'
+      sendMessage({ type: 'error', text: `错误: 找不到编译器\n${compilerHint}` })
       result.errorCount++
       finishCompileLog('失败：找不到 Zig 编译器')
       return result
     }
-    sendMessage({ type: 'info', text: `编译器: ${zigPath}` })
-    compileLogMark(`查找 Zig 编译器: ${zigPath}`)
+    sendMessage({ type: 'info', text: `编译器: ${compilerPath}` })
+    compileLogMark(`查找编译器: ${compilerPath}`)
 
     // 准备目录
     const tempDir = join(projectDir, 'temp')
@@ -10826,7 +10886,7 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
     const outputName = project.projectName
     const outputFileName = getBinaryFileName(outputName, project.outputType, targetPlatform)
     const outputBinary = join(outputDir, outputFileName)
-    const mainC = join(tempDir, 'main.cpp')
+    const mainC = join(tempDir, targetPlatform === 'macos' ? 'main.mm' : 'main.cpp')
     const buildCachePath = join(tempDir, '.build-artifact-cache.json')
 
     const args: string[] = [
@@ -10919,7 +10979,7 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
     }
     compileLogMark('读取上次产物缓存并比对指纹（未命中，需重新编译）')
 
-    const resourceBuild = await compileProjectResources(project, targetPlatform, targetArch, tempDir, zigPath, editorFiles)
+    const resourceBuild = await compileProjectResources(project, targetPlatform, targetArch, tempDir, compilerPath, editorFiles)
     compileLogMark('编译资源(.erc/清单)')
     if (!resourceBuild.success) {
       result.errorCount++
@@ -10933,12 +10993,11 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
 
     // 项目类型
     const isWindowsApp = project.outputType === 'WindowsApp'
-    if (isWindowsApp) {
-      if (targetPlatform !== 'windows') {
-        sendMessage({ type: 'warning', text: `警告: 窗口程序当前仅支持 Windows 目标，已按 ${targetPlatform} 继续尝试编译` })
-      }
+    if (isWindowsApp && targetPlatform === 'windows') {
       args.push('-Xlinker', '--subsystem', '-Xlinker', 'windows')
       sendMessage({ type: 'info', text: '项目类型: Windows窗口程序' })
+    } else if (isWindowsApp && targetPlatform === 'macos') {
+      sendMessage({ type: 'info', text: '项目类型: macOS Cocoa窗口程序' })
     } else if (project.outputType === 'DynamicLibrary') {
       args.push('-shared')
       sendMessage({ type: 'info', text: '项目类型: 动态链接库(DLL)' })
@@ -10980,9 +11039,15 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
       }
     }
 
-    args.push('-target', targetTriple)
+    if (!compiler.isClang) args.push('-target', targetTriple)
 
-    // 源文件/执行字符集均使用 UTF-8，确保中文字符串字面量不被 MSVC 模式按 GBK 解析
+    // 源文件/执行字符集均使用 UTF-8，确保 MSVC 模式不按 GBK 解析；macOS 运行库使用 C++17 filesystem。
+    if (targetPlatform === 'macos') {
+      // 系统 Clang 已在 compilerExtraArgs 中设置 Darwin target；不要再追加 Zig 专用 triple。
+      if (!compiler.isClang) args.push('-std=c++17')
+    } else {
+      args.push('-std=c++17')
+    }
     args.push('-finput-charset=utf-8', '-fexec-charset=utf-8')
 
     // 调试/优化选项
@@ -11001,17 +11066,17 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
     }
 
     sendMessage({ type: 'info', text: '正在编译...' })
-    compileLogMark('准备链接参数，开始调用 zig c++')
-    compileLogRaw(`zig 命令行参数: c++ ${args.join(' ')}`)
+    compileLogMark(`准备链接参数，开始调用 ${compiler.isClang ? 'clang++' : 'zig c++'}`)
+    compileLogRaw(`${compilerPath} ${compiler.isClang ? '' : 'c++ '}${args.join(' ')}`)
 
     const commandSourceLocations = collectCommandSourceLocationsByLibrary(project, editorFiles)
     const unresolvedCmdLibReported = new Set<string>()
 
     // 调用 zig c++
     const compileSuccess = await new Promise<boolean>((resolve) => {
-      const zigDir = dirname(zigPath)
-      const zigArgs = ['c++', ...args]
-      const proc = execFile(zigPath, zigArgs, { cwd: zigDir, maxBuffer: 10 * 1024 * 1024 }, (error, _stdout, stderr) => {
+      const compilerDir = dirname(compilerPath)
+      const compilerArgs = compiler.isClang ? [...compilerExtraArgs, ...args] : ['c++', ...compilerExtraArgs, ...args]
+      const proc = execFile(compilerPath, compilerArgs, { cwd: compilerDir, maxBuffer: 10 * 1024 * 1024 }, (error, _stdout, stderr) => {
         if (stderr) {
           // 必须剥掉行尾 \r（zig 的 stderr 是 CRLF）：JS 正则里 \r 是行终止符、. 不匹配它，
           // 留着它下面所有以 $ 收尾的诊断正则会全部失配，友好化静默退化成透传英文原文。
@@ -11296,4 +11361,23 @@ export function continueDebugExecutable(): boolean {
   } catch {
     return false
   }
+}
+
+// ========== 跨平台编译器支持（macOS 使用系统 Clang）==========
+
+function resolveCompilerForPlatform(targetPlatform: TargetPlatform, targetArch: TargetArch): { path: string; extraArgs: string[]; isClang: boolean } | null {
+  if (targetPlatform === 'macos' && process.platform === 'darwin') {
+    const systemClang = '/usr/bin/clang++'
+    if (existsSync(systemClang)) {
+      const target = targetArch === 'arm64' ? 'arm64-apple-macos11' : 'x86_64-apple-macos11'
+      return {
+        path: systemClang,
+        extraArgs: ['-std=c++17', '-target', target, '-framework', 'Cocoa', '-framework', 'Foundation'],
+        isClang: true,
+      }
+    }
+  }
+
+  const zigPath = findZigCompiler()
+  return zigPath ? { path: zigPath, extraArgs: [], isClang: false } : null
 }
