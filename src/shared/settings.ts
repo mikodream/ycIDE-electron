@@ -68,6 +68,12 @@ export interface IDESettings {
   androidAdbConnectAddress: string
   androidAdbDeviceId: string
   androidAutoStartEmulator: boolean
+  /**
+   * macOS 下窗口关闭行为：
+   * - 'hide'（默认）：关闭窗口只隐藏，App 驻留 Dock（符合 macOS 用户习惯）；用 Cmd+Q / 右键 → 退出才真正退出进程。
+   * - 'quit'：关闭最后一个窗口时直接退出 App（类 Windows / VSCode 行为）。
+   */
+  windowCloseBehavior: 'hide' | 'quit'
 }
 
 export const DEFAULT_IDE_SETTINGS: IDESettings = {
@@ -107,6 +113,7 @@ export const DEFAULT_IDE_SETTINGS: IDESettings = {
   androidAdbConnectAddress: '',
   androidAdbDeviceId: '',
   androidAutoStartEmulator: false,
+  windowCloseBehavior: 'hide',
 }
 
 export function resolveIDESettings(raw?: Partial<IDESettings> | null): IDESettings {
@@ -167,7 +174,12 @@ export function resolveIDESettings(raw?: Partial<IDESettings> | null): IDESettin
     androidAutoStartEmulator: typeof raw.androidAutoStartEmulator === 'boolean'
       ? raw.androidAutoStartEmulator
       : d.androidAutoStartEmulator,
+    windowCloseBehavior: resolveWindowCloseBehavior(raw.windowCloseBehavior, d.windowCloseBehavior),
   }
+}
+
+function resolveWindowCloseBehavior(value: unknown, fallback: IDESettings['windowCloseBehavior']): IDESettings['windowCloseBehavior'] {
+  return value === 'hide' || value === 'quit' ? value : fallback
 }
 
 function clampInt(value: unknown, min: number, max: number, fallback: number): number {

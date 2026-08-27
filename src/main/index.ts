@@ -3115,9 +3115,15 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit()
+    return
+  }
+  // macOS：由用户设置控制。默认 'hide' 保持 Dock 驻留；'quit' 时关窗即退出。
+  if (readIDESettings().windowCloseBehavior === 'quit') {
+    app.quit()
   }
 })
 
 app.on('before-quit', () => {
   stopTerminalProcess()
+  stopExecutable()
 })

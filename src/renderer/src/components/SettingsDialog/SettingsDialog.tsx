@@ -467,6 +467,22 @@ function SettingsDialog({ settings, onClose, onSave, onChange, focusCompiler = f
           </div>
         </div>
         <div className="settings-group">
+          <h4 className="settings-group-title">窗口与退出</h4>
+          <div className="settings-row">
+            <span className="settings-label">关闭窗口行为（macOS）</span>
+            <select
+              className="settings-input"
+              title="macOS 下关闭最后一个窗口时的行为：hide 保持 Dock 驻留（符合 macOS 习惯），quit 直接退出"
+              value={draft.windowCloseBehavior}
+              onChange={(e) => updateDraft('windowCloseBehavior', e.target.value as IDESettings['windowCloseBehavior'])}
+            >
+              <option value="hide">隐藏窗口，驻留 Dock（macOS 默认）</option>
+              <option value="quit">关闭窗口时直接退出 App</option>
+            </select>
+            <span className="settings-unit" />
+          </div>
+        </div>
+        <div className="settings-group">
           <h4 className="settings-group-title">支持库</h4>
           <div className="settings-row">
             <span className="settings-label">在线索引地址</span>
